@@ -31,6 +31,7 @@ cd helper-git
 
 # Build and install (or just run with cargo run)
 cargo install --path .
+```
 
 ## Usage
 hg status
