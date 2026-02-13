@@ -29,6 +29,10 @@ https://github.com/mi-tec/helper-git
 - Press `q` or `Esc` to quit
 - Uses alternate screen buffer → clean exit
 
+## Demo
+
+![Demo](assets/helper-git-status.gif)
+
 ## Installation
 
 ### From source (recommended for now)
