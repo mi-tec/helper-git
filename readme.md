@@ -1,6 +1,15 @@
 # helper-git
 
-A simple, beautiful terminal user interface (TUI) for viewing `git status` with keyboard navigation and highlighting.
+A simple, beautiful terminal user interface (TUI) for.
+
+## Current Features (v0.1.0)
+- Interactive `git status`
+  - Arrow key navigation
+  - Highlighted selection
+  - Repository state detection
+
+⚠️ This release focuses exclusively on the `status` command.
+Additional Git workflows (add, commit, push, diff, etc.) are planned for future versions.
 
 Built with:
 - [ratatui](https://github.com/ratatui-org/ratatui) – terminal UI framework
@@ -34,4 +43,4 @@ cargo install --path .
 ```
 
 ## Usage
-hg status
+```hg status```
