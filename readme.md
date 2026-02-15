@@ -2,14 +2,16 @@
 
 A simple, beautiful terminal user interface (TUI) for.
 
-## Current Features (v0.1.0)
+## Current Features (v0.1.1)
 - Interactive `git status`
   - Arrow key navigation
   - Highlighted selection
   - Repository state detection
+  - In Each higlighted selection file diff shows in Left Pane
+  - Using `Tab` can switch to pane
 
 ⚠️ This release focuses exclusively on the `status` command.
-Additional Git workflows (add, commit, push, diff, etc.) are planned for future versions.
+Additional Git workflows (add, commit, push, etc.) are planned for future versions.
 
 Built with:
 - [ratatui](https://github.com/ratatui-org/ratatui) – terminal UI framework
@@ -28,10 +30,12 @@ https://github.com/mi-tec/helper-git
 - Clean "working tree clean" message when nothing to show
 - Press `q` or `Esc` to quit
 - Uses alternate screen buffer → clean exit
+- In Each higlighted selection file diff shows in Left Pane
+- Using `Tab` can switch to pane
 
 ## Demo
 
-![Demo](assets/helper-git-status.gif)
+![Demo](assets/helper-git-status-diff.gif)
 
 ## Installation
 

@@ -1,3 +1,5 @@
+mod diff;
+
 use anyhow::Result;
 use crossterm::{
     ExecutableCommand,
@@ -11,6 +13,12 @@ use ratatui::{
 };
 use std::io::stdout;
 
+#[derive(PartialEq)]
+enum Focus {
+    Left,
+    Right,
+}
+
 pub fn status(repo: &Repository) -> Result<()> {
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
@@ -18,119 +26,193 @@ pub fn status(repo: &Repository) -> Result<()> {
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
+    // ---------- Load Git Status ----------
     let mut opts = StatusOptions::new();
     opts.include_untracked(true);
+    opts.recurse_untracked_dirs(true);
+
     let statuses = repo.statuses(Some(&mut opts))?;
 
     let mut items: Vec<ListItem> = Vec::new();
     let mut files: Vec<String> = Vec::new();
 
     for entry in statuses.iter() {
-        let path = entry.path().unwrap_or_default().to_string();
+        let path = match entry.path() {
+            Some(p) => p.to_string(),
+            None => continue,
+        };
 
         let (label, color) = match entry.status() {
-            s if s.contains(Status::WT_NEW) => ("New     ", Color::Red),
+            s if s.contains(Status::WT_NEW) => ("New", Color::Red),
             s if s.contains(Status::WT_MODIFIED) => ("Modified", Color::Yellow),
-            s if s.contains(Status::WT_TYPECHANGE) => ("TypeChange", Color::Rgb(255, 165, 0)),
             s if s.contains(Status::INDEX_NEW)
                 || s.contains(Status::WT_RENAMED)
                 || s.contains(Status::INDEX_MODIFIED) =>
             {
-                ("Added   ", Color::Green)
+                ("Added", Color::Green)
             }
             _ => continue,
         };
 
         files.push(path.clone());
 
-        let styled_label = Span::styled(
-            label,
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        );
-        let separator = Span::raw(" | ");
-        let path_span = Span::raw(path);
+        let line = Line::from(vec![
+            Span::styled(
+                label,
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" | "),
+            Span::raw(path),
+        ]);
 
-        let line = Line::from(vec![styled_label, separator, path_span]);
-        let list_item = ListItem::new(line);
-
-        items.push(list_item);
+        items.push(ListItem::new(line));
     }
 
     if items.is_empty() {
-        items.push(ListItem::new(Line::from(Span::styled(
-            "Working tree clean",
-            Style::default().add_modifier(Modifier::ITALIC | Modifier::DIM),
-        ))));
+        items.push(ListItem::new("Working tree clean"));
     }
 
     let mut list_state = ListState::default();
-    if !items.is_empty() {
-        list_state.select(Some(0));
-    }
+    list_state.select(Some(0));
 
-    let highlight_style = Style::default()
-        .bg(Color::DarkGray)
-        .add_modifier(Modifier::BOLD);
+    // ---------- UI State ----------
+    let mut focus = Focus::Left;
+    let mut diff_scroll: u16 = 0;
+    let mut current_diff: Vec<Line<'static>> = Vec::new();
+    let mut last_selected: Option<usize> = None;
 
+    // ---------- Main Loop ----------
     loop {
+        // Recalculate diff only if selection changed
+        if let Some(selected) = list_state.selected() {
+            if Some(selected) != last_selected {
+                if let Some(path) = files.get(selected) {
+                    current_diff = diff::show_file_diff(repo, path)
+                        .unwrap_or_else(|e| vec![Line::from(format!("Error: {}", e))]);
+                }
+                diff_scroll = 0;
+                last_selected = Some(selected);
+            }
+        }
+
+        // ---------- Helper line ----------
+        let help_line = Line::from(vec![
+            Span::raw(" ↑↓ / j k "),
+            Span::styled("navigate", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" • "),
+            Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" actions "),
+            Span::raw(" • "),
+            Span::styled("Tab", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" switch focus "),
+            Span::raw(" • "),
+            Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" quit"),
+        ]);
+
         terminal.draw(|frame| {
             let area = frame.area();
 
-            let block = Block::default().title(" git status ").borders(Borders::ALL);
+            // ---------- Reserve bottom line for helper ----------
+            let outer_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),    // top: main panels
+                    Constraint::Length(1), // bottom: help line
+                ])
+                .split(area);
+
+            // ---------- Horizontal panels ----------
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+                .split(outer_chunks[0]); // top section
+
+            // ---------- Left Panel ----------
+            let left_block = Block::default()
+                .title(" Git Status ")
+                .borders(Borders::ALL)
+                .border_style(if focus == Focus::Left {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                });
 
             let list = List::new(items.clone())
-                .block(block)
-                .highlight_style(highlight_style)
+                .block(left_block)
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                )
                 .highlight_symbol("➜ ")
                 .highlight_spacing(HighlightSpacing::Always);
 
-            frame.render_stateful_widget(list, area, &mut list_state);
+            frame.render_stateful_widget(list, chunks[0], &mut list_state);
 
-            let help_line = Line::from(vec![
-                Span::raw(" ↑↓ "),
-                Span::styled("navigate", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw("  •  "),
-                Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" quit"),
-            ]);
+            // ---------- Right Panel ----------
+            let right_block = Block::default()
+                .title(" Diff ")
+                .borders(Borders::ALL)
+                .border_style(if focus == Focus::Right {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                });
 
-            let help = Paragraph::new(help_line)
+            let paragraph = Paragraph::new(current_diff.clone())
+                .block(right_block)
+                .scroll((diff_scroll, 0));
+
+            frame.render_widget(paragraph, chunks[1]);
+
+            // ---------- Helper Line ----------
+            let help_paragraph = Paragraph::new(help_line)
                 .alignment(Alignment::Center)
                 .style(Style::default().dim());
 
-            let help_area = Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1);
-            frame.render_widget(help, help_area);
+            frame.render_widget(help_paragraph, outer_chunks[1]);
         })?;
 
+        // ---------- Input Handling ----------
         if let Event::Key(key) = event::read()? {
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => break,
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if let Some(i) = list_state.selected() {
-                        if i > 0 {
-                            list_state.select(Some(i.saturating_sub(1)));
+
+                KeyCode::Tab => {
+                    focus = if focus == Focus::Left {
+                        Focus::Right
+                    } else {
+                        Focus::Left
+                    };
+                }
+
+                KeyCode::Up | KeyCode::Char('k') => match focus {
+                    Focus::Left => {
+                        if let Some(i) = list_state.selected() {
+                            if i > 0 {
+                                list_state.select(Some(i - 1));
+                            }
                         }
                     }
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if let Some(i) = list_state.selected() {
-                        if i < items.len().saturating_sub(1) {
-                            list_state.select(Some(i + 1));
+                    Focus::Right => {
+                        diff_scroll = diff_scroll.saturating_sub(1);
+                    }
+                },
+
+                KeyCode::Down | KeyCode::Char('j') => match focus {
+                    Focus::Left => {
+                        if let Some(i) = list_state.selected() {
+                            if i < items.len().saturating_sub(1) {
+                                list_state.select(Some(i + 1));
+                            }
                         }
-                    } else if !items.is_empty() {
-                        list_state.select(Some(0));
                     }
-                }
-                KeyCode::Home | KeyCode::Char('g') => {
-                    if !items.is_empty() {
-                        list_state.select(Some(0));
+                    Focus::Right => {
+                        diff_scroll = diff_scroll.saturating_add(1);
                     }
-                }
-                KeyCode::End | KeyCode::Char('G') => {
-                    if !items.is_empty() {
-                        list_state.select(Some(items.len().saturating_sub(1)));
-                    }
-                }
+                },
+
                 _ => {}
             }
         }
